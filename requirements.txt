@@ -1,0 +1,7 @@
+nnunetv2
+nibabel
+SimpleITK
+scipy
+torch
+numpy
+matplotlib
