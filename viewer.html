@@ -1,72 +1,386 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>CBCT Tooth Segmentation Viewer</title>
-  <script src="https://niivue.github.io/niivue/dist/niivue.umd.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #0f0f0f; color: #ffffff; font-family: "Segoe UI", sans-serif; height: 100vh; display: flex; flex-direction: column; }
-    #header { padding: 12px 20px; background: #1a1a1a; border-bottom: 1px solid #333; display: flex; align-items: center; justify-content: space-between; }
-    #header h1 { font-size: 16px; font-weight: 600; color: #4fc3f7; }
-    #controls { display: flex; gap: 10px; align-items: center; }
-    button { background: #2a2a2a; color: #ffffff; border: 1px solid #444; padding: 7px 16px; cursor: pointer; border-radius: 6px; font-size: 13px; transition: all 0.2s; }
-    button:hover { background: #3a3a3a; border-color: #4fc3f7; }
-    button.active { background: #1565c0; border-color: #4fc3f7; }
-    #opacity-wrapper { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #aaa; }
-    input[type=range] { width: 90px; accent-color: #4fc3f7; }
-    #canvas-wrapper { flex: 1; position: relative; }
-    canvas { width: 100%; height: 100%; display: block; }
-    #status { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); padding: 6px 16px; border-radius: 20px; font-size: 12px; color: #aaa; pointer-events: none; }
-  </style>
+<meta charset="UTF-8">
+<title>CBCT Tooth Segmentation Viewer</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0f0f0f; color:#fff; font-family:"Segoe UI",sans-serif; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+#header { background:#1a1a1a; border-bottom:1px solid #333; padding:8px 14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px; flex-shrink:0; }
+h1 { font-size:13px; font-weight:600; color:#4fc3f7; }
+#controls { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+button { background:#2a2a2a; color:#fff; border:1px solid #444; padding:4px 11px; border-radius:5px; cursor:pointer; font-size:12px; }
+button:hover { border-color:#4fc3f7; }
+button.on { background:#1565c0; border-color:#4fc3f7; }
+label { font-size:11px; color:#888; display:flex; align-items:center; gap:5px; }
+input[type=range] { width:70px; accent-color:#4fc3f7; }
+#view-2d { flex:1; display:flex; min-height:0; gap:3px; padding:6px; background:#0a0a0a; }
+.panel { flex:1; display:flex; flex-direction:column; min-width:0; background:#111; border-radius:6px; overflow:hidden; padding:4px; }
+.ptitle { font-size:10px; color:#555; text-align:center; margin-bottom:3px; letter-spacing:1px; text-transform:uppercase; flex-shrink:0; }
+/* canvas fills panel — we draw into it at its actual pixel size */
+canvas.slice { flex:1; width:100%; min-height:0; image-rendering:pixelated; display:block; }
+#view-3d { flex:1; display:none; min-height:0; position:relative; background:#050505; }
+#cv3d { width:100%; height:100%; display:block; cursor:grab; }
+#cv3d:active { cursor:grabbing; }
+#legend { position:absolute; top:10px; left:10px; font-size:10px; color:#aaa; line-height:2; }
+#legend div { display:flex; align-items:center; gap:6px; }
+#legend span { width:10px; height:10px; border-radius:2px; flex-shrink:0; display:inline-block; }
+#hint3d { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); font-size:10px; color:#444; white-space:nowrap; background:rgba(0,0,0,0.5); padding:3px 12px; border-radius:10px; }
+#build3d-status { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:13px; color:#888; display:none; }
+#info { background:#111; border-top:1px solid #1a1a1a; padding:4px 14px; font-size:10px; color:#444; display:flex; gap:16px; flex-shrink:0; }
+#overlay { position:fixed; inset:0; background:#0f0f0f; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:10px; z-index:100; }
+.spinner { width:34px; height:34px; border:3px solid #222; border-top-color:#4fc3f7; border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#load-status { font-size:13px; color:#888; }
+#load-bar-wrap { width:240px; height:3px; background:#1a1a1a; border-radius:2px; }
+#load-bar { height:100%; background:#4fc3f7; border-radius:2px; width:0; transition:width .2s; }
+</style>
 </head>
 <body>
-  <div id="header">
-    <h1>CBCT Tooth Segmentation Viewer</h1>
-    <div id="controls">
-      <button id="btn-seg" class="active" onclick="toggleSeg()">Segmentation: ON</button>
-      <button onclick="toggleView()">Toggle 3D</button>
-      <button onclick="resetView()">Reset View</button>
-      <div id="opacity-wrapper">
-        Opacity:
-        <input type="range" id="opacity" min="0" max="1" step="0.05" value="0.7" oninput="setOpacity(this.value)">
-      </div>
-    </div>
+
+<div id="overlay">
+  <div class="spinner"></div>
+  <div id="load-status">Loading scan.nii.gz...</div>
+  <div id="load-bar-wrap"><div id="load-bar"></div></div>
+</div>
+
+<div id="header">
+  <h1>🦷 CBCT Tooth Segmentation Viewer</h1>
+  <div id="controls">
+    <button class="on" id="tab2d" onclick="showTab('2d')">2D Slices</button>
+    <button id="tab3d" onclick="showTab('3d')">3D Surface</button>
+    <button id="btn-seg" class="on" onclick="toggleSeg()">Seg: ON</button>
+    <label>Opacity <input type="range" id="op" min="0" max="1" step="0.05" value="0.6" oninput="redrawAll()"></label>
+    <span id="sctrl" style="display:flex;gap:6px;align-items:center">
+      <label>Axial <input type="range" id="sl-ax" min="0" max="1" step="1" value="0" oninput="redrawAll()"></label>
+      <label>Coronal <input type="range" id="sl-co" min="0" max="1" step="1" value="0" oninput="redrawAll()"></label>
+      <label>Sagittal <input type="range" id="sl-sa" min="0" max="1" step="1" value="0" oninput="redrawAll()"></label>
+    </span>
   </div>
-  <div id="canvas-wrapper">
-    <canvas id="gl"></canvas>
-    <div id="status">Scroll to navigate slices | Click + drag to rotate in 3D</div>
+</div>
+
+<div id="main" style="flex:1;display:flex;min-height:0;">
+  <div id="view-2d">
+    <div class="panel"><div class="ptitle">Axial</div><canvas id="cv-ax" class="slice"></canvas></div>
+    <div class="panel"><div class="ptitle">Coronal</div><canvas id="cv-co" class="slice"></canvas></div>
+    <div class="panel"><div class="ptitle">Sagittal</div><canvas id="cv-sa" class="slice"></canvas></div>
   </div>
-  <script>
-    const nv = new niivue.Niivue({ show3Dcrosshair: true, backColor: [0.07, 0.07, 0.07, 1] });
-    nv.attachToCanvas(document.getElementById("gl"));
-    async function loadVolumes() {
-      await nv.loadVolumes([
-        { url: "scan.nii.gz", colormap: "gray", opacity: 1.0 },
-        { url: "mask.nii.gz", colormap: "warm", opacity: 0.7 }
-      ]);
+  <div id="view-3d">
+    <canvas id="cv3d"></canvas>
+    <div id="legend"></div>
+    <div id="hint3d">Left-drag: rotate &nbsp;|&nbsp; Scroll: zoom</div>
+    <div id="build3d-status">Building 3D surface...</div>
+  </div>
+</div>
+
+<div id="info">
+  <span id="info-shape">—</span>
+  <span id="info-labels">—</span>
+  <span id="info-slice">—</span>
+</div>
+
+<script>
+// ── NIfTI parser ──────────────────────────────────────────────────────────────
+async function readNifti(url, onProgress) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Cannot fetch ' + url + ': HTTP ' + res.status);
+  const total = parseInt(res.headers.get('content-length') || '0');
+  const reader = res.body.getReader();
+  const chunks = []; let loaded = 0;
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    chunks.push(value); loaded += value.length;
+    if (onProgress && total) onProgress(loaded / total);
+  }
+  let buf = new Uint8Array(loaded), pos = 0;
+  for (const c of chunks) { buf.set(c, pos); pos += c.length; }
+  // decompress gzip
+  if (buf[0]===0x1f && buf[1]===0x8b) {
+    const ds = new DecompressionStream('gzip');
+    const w = ds.writable.getWriter(); w.write(buf); w.close();
+    const out=[], r=ds.readable.getReader();
+    while(true){const{done,value}=await r.read();if(done)break;out.push(value);}
+    let sz=0; for(const c of out) sz+=c.length;
+    buf=new Uint8Array(sz); let off=0;
+    for(const c of out){buf.set(c,off);off+=c.length;}
+  }
+  const dv=new DataView(buf.buffer);
+  const le=dv.getInt32(0,true)===348;
+  const dims=Array.from({length:8},(_,i)=>dv.getInt16(40+i*2,le));
+  const nx=dims[1],ny=dims[2],nz=dims[3];
+  const dt=dv.getInt16(70,le);
+  const voff=Math.max(dv.getFloat32(108,le),352);
+  const n=nx*ny*nz;
+  const ctor={2:Uint8Array,4:Int16Array,8:Int32Array,16:Float32Array,64:Float64Array,512:Uint16Array}[dt];
+  if(!ctor) throw new Error('Unsupported NIfTI datatype: '+dt);
+  return {data:Float32Array.from(new ctor(buf.buffer,voff,n)),nx,ny,nz};
+}
+
+// ── Colour ────────────────────────────────────────────────────────────────────
+const PAL=[null,[220,80,80],[80,210,120],[80,130,230],[230,200,60],[210,80,200],[60,200,210],[240,150,50],[50,190,140],[190,80,190],[140,200,80],[80,140,200],[255,140,40]];
+function col(l){return PAL[l%PAL.length]||[180,180,180];}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let scan=null,mask=null,scanMin,scanMax,segOn=true,tab='2d';
+let built3d=false;
+
+// ── 2D: draw into canvas at its ACTUAL pixel size ─────────────────────────────
+function norm(v){return Math.max(0,Math.min(255,Math.round((v-scanMin)/(scanMax-scanMin)*255)));}
+
+function drawSlice(cvId, getPixel, dataW, dataH) {
+  const cv = document.getElementById(cvId);
+  // Use the canvas's CSS display size as the draw target
+  const W = cv.clientWidth  || dataW;
+  const H = cv.clientHeight || dataH;
+  cv.width = W;
+  cv.height = H;
+  const ctx = cv.getContext('2d');
+  // Draw at data resolution into offscreen, then scale
+  const off = document.createElement('canvas');
+  off.width = dataW; off.height = dataH;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(dataW, dataH);
+  const d = img.data;
+  const op = parseFloat(document.getElementById('op').value);
+  for(let y=0;y<dataH;y++) for(let x=0;x<dataW;x++){
+    const [sv,mv]=getPixel(x,y);
+    const g=norm(sv);
+    const i=(y*dataW+x)*4;
+    if(segOn&&mv>0){const c=col(mv);d[i]=Math.round(g*(1-op)+c[0]*op);d[i+1]=Math.round(g*(1-op)+c[1]*op);d[i+2]=Math.round(g*(1-op)+c[2]*op);}
+    else{d[i]=d[i+1]=d[i+2]=g;}
+    d[i+3]=255;
+  }
+  octx.putImageData(img,0,0);
+  // Scale to fit canvas, maintaining aspect ratio, centered
+  const scaleX=W/dataW, scaleY=H/dataH;
+  const scale=Math.min(scaleX,scaleY);
+  const dx=(W-dataW*scale)/2, dy=(H-dataH*scale)/2;
+  ctx.fillStyle='#111'; ctx.fillRect(0,0,W,H);
+  ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(off, dx, dy, dataW*scale, dataH*scale);
+}
+
+function redrawAll(){
+  if(!scan) return;
+  const {data:sd,nx,ny,nz}=scan;
+  const md=mask?mask.data:null;
+  const ax=parseInt(document.getElementById('sl-ax').value);
+  const co=parseInt(document.getElementById('sl-co').value);
+  const sa=parseInt(document.getElementById('sl-sa').value);
+  document.getElementById('info-slice').textContent='Ax:'+ax+' Co:'+co+' Sa:'+sa;
+  drawSlice('cv-ax',(x,y)=>[sd[ax*ny*nx+y*nx+x],md?md[ax*ny*nx+y*nx+x]:0],nx,ny);
+  drawSlice('cv-co',(x,z)=>[sd[z*ny*nx+co*nx+x],md?md[z*ny*nx+co*nx+x]:0],nx,nz);
+  drawSlice('cv-sa',(y,z)=>[sd[z*ny*nx+y*nx+sa],md?md[z*ny*nx+y*nx+sa]:0],ny,nz);
+}
+
+function toggleSeg(){
+  segOn=!segOn;
+  const btn=document.getElementById('btn-seg');
+  btn.textContent=segOn?'Seg: ON':'Seg: OFF';
+  btn.classList.toggle('on',segOn);
+  redrawAll();
+  if(tab==='3d') render3D();
+}
+
+// ── 3D WebGL ──────────────────────────────────────────────────────────────────
+let gl=null,prog3=null,vbuf=null,nVerts=0;
+let rotX=0.4,rotY=0.3,zoom=2.2;
+let drag=false,lastX=0,lastY=0;
+
+const VS=`attribute vec3 p;attribute vec3 c;uniform mat4 m;varying vec3 vc;
+void main(){gl_Position=m*vec4(p,1.);gl_PointSize=2.;vc=c;}`;
+const FS=`precision mediump float;varying vec3 vc;
+void main(){gl_FragColor=vec4(vc,1.);}`;
+
+function mkShader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+
+function initGL(){
+  const cv=document.getElementById('cv3d');
+  gl=cv.getContext('webgl')||cv.getContext('experimental-webgl');
+  if(!gl) return false;
+  prog3=gl.createProgram();
+  gl.attachShader(prog3,mkShader(gl.VERTEX_SHADER,VS));
+  gl.attachShader(prog3,mkShader(gl.FRAGMENT_SHADER,FS));
+  gl.linkProgram(prog3);
+  gl.enable(gl.DEPTH_TEST);
+  vbuf=gl.createBuffer();
+  return true;
+}
+
+function buildSurface(){
+  const {data:md,nx,ny,nz}=mask;
+  const sc=1.0/Math.max(nx,ny,nz);
+  // Compute centroid
+  let sx=0,sy=0,sz2=0,cnt=0;
+  for(let i=0;i<md.length;i++){
+    if(md[i]>0){
+      const z=Math.floor(i/(ny*nx));
+      const y=Math.floor((i%(ny*nx))/nx);
+      const x=i%nx;
+      sx+=x*sc;sy+=y*sc;sz2+=z*sc;cnt++;
     }
-    loadVolumes();
-    let segVisible = true;
-    function toggleSeg() {
-      segVisible = !segVisible;
-      nv.setOpacity(1, segVisible ? 0.7 : 0);
-      const btn = document.getElementById("btn-seg");
-      btn.textContent = segVisible ? "Segmentation: ON" : "Segmentation: OFF";
-      btn.classList.toggle("active", segVisible);
+  }
+  const ocx=cnt?sx/cnt:0.5, ocy=cnt?sy/cnt:0.5, ocz=cnt?sz2/cnt:0.5;
+
+  // Surface: stride 2 to keep vertex count manageable
+  const verts=[];
+  const S=2;
+  for(let z=S;z<nz-S;z+=S) for(let y=S;y<ny-S;y+=S) for(let x=S;x<nx-S;x+=S){
+    const l=md[z*ny*nx+y*nx+x];
+    if(!l) continue;
+    // Check 6 neighbors — surface if any neighbor differs
+    if(md[(z-S)*ny*nx+y*nx+x]===l &&
+       md[(z+S)*ny*nx+y*nx+x]===l &&
+       md[z*ny*nx+(y-S)*nx+x]===l &&
+       md[z*ny*nx+(y+S)*nx+x]===l &&
+       md[z*ny*nx+y*nx+(x-S)]===l &&
+       md[z*ny*nx+y*nx+(x+S)]===l) continue;
+    const c=col(l);
+    verts.push(x*sc-ocx, y*sc-ocy, z*sc-ocz, c[0]/255,c[1]/255,c[2]/255);
+  }
+
+  nVerts=verts.length/6;
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(verts),gl.STATIC_DRAW);
+  return nVerts;
+}
+
+function m4mul(a,b){const o=new Float32Array(16);for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;for(let k=0;k<4;k++)s+=a[i*4+k]*b[k*4+j];o[i*4+j]=s;}return o;}
+function mRX(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([1,0,0,0,0,c,-s,0,0,s,c,0,0,0,0,1]);}
+function mRY(a){const c=Math.cos(a),s=Math.sin(a);return new Float32Array([c,0,s,0,0,1,0,0,-s,0,c,0,0,0,0,1]);}
+function mPersp(fov,asp,n,f){const t=1/Math.tan(fov/2);return new Float32Array([t/asp,0,0,0,0,t,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0]);}
+
+function render3D(){
+  if(!gl||!nVerts) return;
+  const cv=document.getElementById('cv3d');
+  cv.width=cv.clientWidth||800; cv.height=cv.clientHeight||600;
+  gl.viewport(0,0,cv.width,cv.height);
+  gl.clearColor(0.04,0.04,0.04,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  if(!segOn) return;
+  const asp=cv.width/cv.height;
+  const proj=mPersp(0.65,asp,0.001,100);
+  const view=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,-zoom,1]);
+  const rot=m4mul(mRX(rotX),mRY(rotY));
+  const mvp=m4mul(proj,m4mul(view,rot));
+  gl.useProgram(prog3);
+  gl.uniformMatrix4fv(gl.getUniformLocation(prog3,'m'),false,mvp);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbuf);
+  const s=24;
+  const ap=gl.getAttribLocation(prog3,'p');
+  gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap,3,gl.FLOAT,false,s,0);
+  const ac=gl.getAttribLocation(prog3,'c');
+  gl.enableVertexAttribArray(ac); gl.vertexAttribPointer(ac,3,gl.FLOAT,false,s,12);
+  gl.drawArrays(gl.POINTS,0,nVerts);
+}
+
+function setup3DControls(){
+  const cv=document.getElementById('cv3d');
+  cv.addEventListener('mousedown',e=>{drag=true;lastX=e.clientX;lastY=e.clientY;e.preventDefault();});
+  window.addEventListener('mouseup',()=>drag=false);
+  window.addEventListener('mousemove',e=>{
+    if(!drag) return;
+    rotY+=(e.clientX-lastX)*0.007;
+    rotX+=(e.clientY-lastY)*0.007;
+    lastX=e.clientX;lastY=e.clientY;
+    render3D();
+  });
+  cv.addEventListener('wheel',e=>{
+    e.preventDefault();
+    zoom*=e.deltaY>0?1.08:0.92;
+    zoom=Math.max(0.2,Math.min(10,zoom));
+    render3D();
+  },{passive:false});
+}
+
+function showTab(t){
+  tab=t;
+  document.getElementById('view-2d').style.display=t==='2d'?'flex':'none';
+  document.getElementById('view-3d').style.display=t==='3d'?'flex':'none';
+  document.getElementById('sctrl').style.display=t==='2d'?'flex':'none';
+  document.getElementById('tab2d').classList.toggle('on',t==='2d');
+  document.getElementById('tab3d').classList.toggle('on',t==='3d');
+  if(t==='3d'){
+    if(!built3d){
+      document.getElementById('build3d-status').style.display='block';
+      setTimeout(()=>{
+        if(initGL()){
+          const n=buildSurface();
+          setup3DControls();
+          document.getElementById('build3d-status').style.display='none';
+          document.getElementById('info-labels').textContent+=' | 3D verts: '+n;
+          built3d=true;
+        }
+        render3D();
+      },100);
+    } else {
+      setTimeout(render3D,50);
     }
-    function toggleView() {
-      nv.setSliceType(nv.opts.sliceType !== 4 ? nv.sliceTypeRender : nv.sliceTypeMultiplanar);
-    }
-    function resetView() {
-      nv.setSliceType(nv.sliceTypeMultiplanar);
-      nv.setOpacity(1, 0.7);
-      document.getElementById("opacity").value = 0.7;
-      segVisible = true;
-      document.getElementById("btn-seg").textContent = "Segmentation: ON";
-      document.getElementById("btn-seg").classList.add("active");
-    }
-    function setOpacity(val) { if (segVisible) nv.setOpacity(1, parseFloat(val)); }
-  </script>
+  }
+  if(t==='2d') redrawAll();
+}
+
+function buildLegend(labels){
+  const el=document.getElementById('legend');
+  el.innerHTML='';
+  labels.forEach(l=>{
+    const c=col(l);
+    const row=document.createElement('div');
+    row.innerHTML='<span style="background:rgb('+c[0]+','+c[1]+','+c[2]+')"></span> Label '+l;
+    el.appendChild(row);
+  });
+}
+
+function setProgress(p){document.getElementById('load-bar').style.width=(p*100)+'%';}
+function setStatus(s){document.getElementById('load-status').textContent=s;}
+
+async function main(){
+  try{
+    setStatus('Loading scan.nii.gz...');
+    scan=await readNifti('./scan.nii.gz',p=>setProgress(p*0.55));
+    setStatus('Loading mask.nii.gz...');
+    mask=await readNifti('./mask.nii.gz',p=>setProgress(0.55+p*0.3));
+    setStatus('Ready');
+
+    const sorted=Float32Array.from(scan.data).sort();
+    const n=sorted.length;
+    scanMin=sorted[Math.floor(n*0.05)];
+    scanMax=sorted[Math.floor(n*0.95)];
+
+    const {nx,ny,nz}=scan;
+    const slAx=document.getElementById('sl-ax');
+    const slCo=document.getElementById('sl-co');
+    const slSa=document.getElementById('sl-sa');
+    slAx.max=nz-1; slAx.value=Math.floor(nz/2);
+    slCo.max=ny-1; slCo.value=Math.floor(ny/2);
+    slSa.max=nx-1; slSa.value=Math.floor(nx/2);
+
+    const labelSet=[...new Set(mask.data)].filter(l=>l>0).sort((a,b)=>a-b);
+    document.getElementById('info-shape').textContent='Shape:'+nx+'x'+ny+'x'+nz;
+    document.getElementById('info-labels').textContent='Labels:'+labelSet.join(',');
+    buildLegend(labelSet);
+
+    [['cv-ax','sl-ax'],['cv-co','sl-co'],['cv-sa','sl-sa']].forEach(([cid,sid])=>{
+      document.getElementById(cid).addEventListener('wheel',e=>{
+        e.preventDefault();
+        const sl=document.getElementById(sid);
+        sl.value=Math.max(0,Math.min(parseInt(sl.max),parseInt(sl.value)+(e.deltaY>0?1:-1)));
+        redrawAll();
+      },{passive:false});
+    });
+
+    setProgress(1);
+    document.getElementById('overlay').style.display='none';
+    redrawAll();
+
+  } catch(e){
+    setStatus('Error: '+e.message);
+    document.querySelector('.spinner').style.display='none';
+    console.error(e);
+  }
+}
+main();
+</script>
 </body>
 </html>
